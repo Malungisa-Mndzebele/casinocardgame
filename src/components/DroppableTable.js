@@ -2,7 +2,7 @@ import React from 'react';
 import { useDrop } from 'react-dnd';
 import Card from './Card';
 
-function DroppableTable({ cards, player1Home, player2Home }) {
+function DroppableTable({ cards = [], player1Home = [], player2Home = [] }) {
   const [, drop] = useDrop(() => ({
     accept: 'card',
     drop: (item, monitor) => {
@@ -29,13 +29,30 @@ function DroppableTable({ cards, player1Home, player2Home }) {
     zIndex: 1,
   };
 
+  const dealerStyle = {
+    position: 'absolute',
+    top: '20px',
+    right: '20px',
+    width: '80px',
+    height: '80px',
+    borderRadius: '50%',
+    backgroundColor: '#333',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    color: '#fff',
+    fontWeight: 'bold',
+    boxShadow: '0 0 10px rgba(0,0,0,0.5)',
+    zIndex: 2,
+  };
+
   return (
     <div
       id="table"
       ref={drop}
       style={{
         width: '100%',
-        height: '500px', // Increased height to accommodate home areas
+        height: '500px',
         border: '20px solid #8B4513',
         borderRadius: '50px',
         position: 'relative',
@@ -71,6 +88,11 @@ function DroppableTable({ cards, player1Home, player2Home }) {
         {player2Home?.length || 0} cards
       </div>
 
+      {/* Dealer */}
+      <div style={dealerStyle}>
+        Dealer
+      </div>
+
       {cards.map((card, index) => (
         <Card
           key={index}
@@ -79,7 +101,7 @@ function DroppableTable({ cards, player1Home, player2Home }) {
             position: 'absolute',
             left: card.x,
             top: card.y,
-            zIndex: '2', // Ensure cards are above the background and home areas
+            zIndex: '2',
           }}
         />
       ))}
