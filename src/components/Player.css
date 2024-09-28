@@ -1,0 +1,25 @@
+.player {
+    margin-bottom: 20px;
+  }
+  
+  .hand {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 10px 0;
+  }
+  
+  .card-wrapper {
+    margin-right: 10px;
+    flex: 0 0 auto;
+  }
+  
+  .current-player {
+    background-color: #f0f0f0;
+    padding: 10px;
+    border-radius: 5px;
+  }
+  
+  .home {
+    margin-top: 10px;
+  }
