@@ -18,12 +18,11 @@
     "ws": "^8.18.0"
   },
   "scripts": {
-    "start": "node serve/index.js"
+    "start": "node serve/index.js",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
-    // ... other scripts ...
+    "eject": "react-scripts eject",
     "start": "GENERATE_SOURCEMAP=false react-scripts start",
     "build": "GENERATE_SOURCEMAP=false react-scripts build"
   },
