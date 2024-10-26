@@ -108,9 +108,11 @@ function App() {
   };
 
   const initializeWebSocket = () => {
-    const socket = io(process.env.REACT_APP_VERCEL_URL || 'http://localhost:3000', {
+    const socket = io({
       path: '/api/socket',
-      addTrailingSlash: false
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
     });
   
     socket.on('connect', () => {

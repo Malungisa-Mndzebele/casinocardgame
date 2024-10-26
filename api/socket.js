@@ -1,40 +1,63 @@
 import { Server } from 'socket.io';
 
-if (!global.io) {
-  global.io = new Server({
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
-    }
-  });
-}
+const SocketHandler = (req, res) => {
+  if (res.socket.server.io) {
+    console.log('Socket is already running');
+  } else {
+    console.log('Socket is initializing');
+    const io = new Server(res.socket.server, {
+      path: '/api/socket',
+      addTrailingSlash: false,
+      cors: {
+        origin: [
+          'https://casinocardgame.vercel.app',
+          'http://localhost:3000'
+        ],
+        methods: ['GET', 'POST'],
+        credentials: true,
+        allowedHeaders: ['Content-Type']
+      },
+      transports: ['websocket', 'polling']
+    });
 
-export default function SocketHandler(req, res) {
-  if (!global.io) {
-    console.log('Socket server not initialized');
-    res.status(500).json({ error: 'Socket server not initialized' });
-    return;
-  }
-
-  // Set up socket event handlers if they haven't been set up yet
-  if (!global.io.listenerCount('connection')) {
-    global.io.on('connection', (socket) => {
+    io.on('connection', (socket) => {
       console.log('Client connected');
       
       socket.on('joinGame', (data) => {
-        // Your existing JOIN_GAME logic
+        console.log('Player joining:', data);
         socket.emit('gameJoined', {
-          playerNumber: global.io.engine.clientsCount,
-          // ... other data
+          playerNumber: io.engine.clientsCount,
+          playerName: data.playerName
         });
+
+        if (io.engine.clientsCount === 2) {
+          io.emit('gameStarted', {
+            players: Array.from(io.sockets.sockets).map((socket, index) => ({
+              id: index + 1,
+              name: `Player ${index + 1}`
+            }))
+          });
+        }
       });
 
       socket.on('cardSelected', (data) => {
-        socket.broadcast.emit('cardUpdated', data);
+        socket.broadcast.emit('cardSelected', data);
+      });
+
+      socket.on('dealingStarted', (data) => {
+        socket.broadcast.emit('dealingStarted', data);
       });
 
       socket.on('handsDealt', (data) => {
-        socket.broadcast.emit('receiveHands', data);
+        socket.broadcast.emit('handsDealt', data);
+      });
+
+      socket.on('cardPlayed', (data) => {
+        socket.broadcast.emit('cardPlayed', data);
+      });
+
+      socket.on('cardsCaptered', (data) => {
+        socket.broadcast.emit('cardsCaptered', data);
       });
 
       socket.on('disconnect', () => {
@@ -42,13 +65,16 @@ export default function SocketHandler(req, res) {
         socket.broadcast.emit('playerDisconnected');
       });
     });
-  }
 
-  res.status(200).json({ message: 'Socket server running' });
-}
+    res.socket.server.io = io;
+  }
+  res.end();
+};
 
 export const config = {
   api: {
     bodyParser: false
   }
 };
+
+export default SocketHandler;
