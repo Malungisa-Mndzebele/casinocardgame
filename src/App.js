@@ -8,6 +8,7 @@ import Player from './components/Player';
 import DroppableTable from './components/DroppableTable';
 import LandingPage from './components/LandingPage';
 import RulesPage from './components/RulesPage';
+import io from 'socket.io-client';
 
 // Utility function to create and shuffle a deck
 const createFullDeck = () => {
@@ -64,10 +65,10 @@ function App() {
     if (gameState === 'playing' && playerNumber === 1) {
       const newDeck = createFullDeck();
       setDeck(newDeck);
-      ws.send(JSON.stringify({
+      ws.emit('eventName', {
         type: 'DECK_INITIALIZED',
         deck: newDeck
-      }));
+      });
     }
   }, [gameState, playerNumber, ws]);
 
@@ -106,38 +107,136 @@ function App() {
     setDeck([]);
   };
 
-  // Initialize WebSocket connection
   const initializeWebSocket = () => {
-    let wsConnection = null;
-    try {
-      wsConnection = new WebSocket('ws://localhost:8080');
+    const socket = io(process.env.REACT_APP_VERCEL_URL || 'http://localhost:3000', {
+      path: '/api/socket',
+      addTrailingSlash: false
+    });
+  
+    socket.on('connect', () => {
+      console.log('Connected to server');
+      setGameState('joining');
+      socket.emit('joinGame', {
+        playerName: `Player ${Math.floor(Math.random() * 1000)}`
+      });
+    });
+  
+    socket.on('gameJoined', (data) => {
+      setPlayerNumber(data.playerNumber);
+      setGameState('waiting');
+      setPlayers(prev => {
+        const newPlayers = [...prev];
+        newPlayers[data.playerNumber - 1] = {
+          ...newPlayers[data.playerNumber - 1],
+          id: data.playerNumber,
+          name: `Player ${data.playerNumber}`
+        };
+        return newPlayers;
+      });
+    });
+  
+    socket.on('gameStarted', (data) => {
+      setPlayers(data.players.map(p => ({
+        ...p,
+        hand: [],
+        home: [],
+        score: 0
+      })));
+      setGameState('playing');
+      setDealingPhase(playerNumber === 1 ? 'selecting' : 'watching_selection');
+    });
+  
+    socket.on('cardSelected', (data) => {
+      if (playerNumber !== 1) {
+        setDeck(data.remainingDeck);
+        setDeckCount(data.deckCount);
+        setSelectedInitialCards(data.selectedCount);
+        setTableCards(data.allCards);
+      }
+    });
+  
+    socket.on('dealingStarted', (data) => {
+      setDealingPhase('dealing');
+      setTimeout(() => {
+        if (playerNumber === 1) {
+          socket.emit('dealingComplete', {
+            finalCards: data.finalCards
+          });
+        }
+      }, 6000);
+    });
+  
+    socket.on('handsDealt', (data) => {
+      setDeck(data.remainingDeck);
+      setDeckCount(data.deckCount);
+      setPlayers(prev => prev.map(player => ({
+        ...player,
+        hand: data.hands[player.id] || []
+      })));
+      setDealingPhase('playing');
+    });
+  
+    socket.on('cardPlayed', (data) => {
+      setTableCards(prev => [...prev, {
+        ...data.card,
+        x: data.position.x,
+        y: data.position.y
+      }]);
+      setCurrentPlayer(curr => curr === 0 ? 1 : 0);
       
-      wsConnection.onopen = () => {
-        console.log('Connected to server');
-        setGameState('joining');
-        wsConnection.send(JSON.stringify({
-          type: 'JOIN_GAME',
-          playerName: `Player ${Math.floor(Math.random() * 1000)}`
-        }));
-      };
-
-      wsConnection.onclose = () => {
-        console.log('Disconnected from server');
-        setGameState('disconnected');
-      };
-
-      wsConnection.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('Connection error occurred. Please try refreshing the page.');
-        setGameState('error');
-      };
-
-      setWs(wsConnection);
-    } catch (error) {
-      console.error('WebSocket connection error:', error);
-      setError('Failed to establish connection. Please check your internet connection.');
+      setPlayers(prev => prev.map(player => {
+        if (player.id === data.playerId) {
+          return {
+            ...player,
+            hand: player.hand.filter(c => 
+              c.id !== data.card.id
+            )
+          };
+        }
+        return player;
+      }));
+  
+      setDeck(prev => prev.map(card => 
+        card.id === data.card.id ? { ...card, used: true } : card
+      ));
+      setDeckCount(prev => prev - 1);
+    });
+  
+    socket.on('cardsCaptered', (data) => {
+      setPlayers(prev => prev.map(player => {
+        if (player.id === data.playerId) {
+          return {
+            ...player,
+            home: [...player.home, ...data.cards],
+            score: player.score + data.cards.length
+          };
+        }
+        return player;
+      }));
+      setTableCards(prev => 
+        prev.filter(card => 
+          !data.cards.some(c => c.id === card.id)
+        )
+      );
+    });
+  
+    socket.on('disconnect', () => {
+      console.log('Disconnected from server');
+      setGameState('disconnected');
+    });
+  
+    socket.on('playerDisconnected', () => {
+      setGameState('opponent_disconnected');
+      setError('Your opponent has disconnected from the game.');
+    });
+  
+    socket.on('error', (error) => {
+      console.error('Socket error:', error);
+      setError('Connection error occurred. Please try refreshing the page.');
       setGameState('error');
-    }
+    });
+  
+    setWs(socket);
   };
 
   // Handle card selection
@@ -177,7 +276,7 @@ function App() {
       setDeckCount(prev => prev - 1);
 
       // Notify other player
-      ws.send(JSON.stringify({
+      ws.emit('eventName', {
         type: 'CARD_SELECTED',
         cardIndex,
         selectedCount: newCount,
@@ -186,7 +285,7 @@ function App() {
         remainingDeck: newDeck,
         deckCount: deckCount - 1,
         playerNumber: playerNumber
-      }));
+      });
 
       if (newCount === 4) {
         setTimeout(() => {
@@ -217,146 +316,44 @@ function App() {
     setDeck(newDeck);
     setDeckCount(prev => prev - 24);
 
-    ws.send(JSON.stringify({
+    ws.emit('eventName', {
       type: 'HANDS_DEALT',
       hands,
       remainingDeck: newDeck,
       deckCount: deckCount - 24
-    }));
+    });
   };
 
-// Handle WebSocket messages
+// Replace the handleMessage function with:
 const handleMessage = useCallback((event) => {
-  try {
-    const data = JSON.parse(event.data);
-    console.log('Received message:', data.type);
+  // Instead of setting ws.onmessage, set up individual event listeners
+  if (ws) {
+    ws.on('gameJoined', (data) => {
+      setPlayerNumber(data.playerNumber);
+      setGameState('waiting');
+      setPlayers(prev => {
+        const newPlayers = [...prev];
+        newPlayers[data.playerNumber - 1] = {
+          ...newPlayers[data.playerNumber - 1],
+          id: data.playerNumber,
+          name: `Player ${data.playerNumber}`
+        };
+        return newPlayers;
+      });
+    });
 
-    switch (data.type) {
-      case 'DECK_INITIALIZED':
-        if (playerNumber !== 1) {
-          setDeck(data.deck);
-        }
-        break;
+    ws.on('gameStarted', (data) => {
+      setPlayers(data.players.map(p => ({
+        ...p,
+        hand: [],
+        home: [],
+        score: 0
+      })));
+      setGameState('playing');
+      setDealingPhase(playerNumber === 1 ? 'selecting' : 'watching_selection');
+    });
 
-      case 'GAME_JOINED':
-        setPlayerNumber(data.playerNumber);
-        setGameState('waiting');
-        setPlayers(prev => {
-          const newPlayers = [...prev];
-          newPlayers[data.playerNumber - 1] = {
-            ...newPlayers[data.playerNumber - 1],
-            id: data.playerNumber,
-            name: `Player ${data.playerNumber}`
-          };
-          return newPlayers;
-        });
-        break;
-
-      case 'GAME_STARTED':
-        setPlayers(data.players.map(p => ({
-          ...p,
-          hand: [],
-          home: [],
-          score: 0
-        })));
-        setGameState('playing');
-        setDealingPhase(playerNumber === 1 ? 'selecting' : 'watching_selection');
-        break;
-
-      case 'CARD_SELECTED':
-        if (playerNumber !== 1) {
-          setDeck(data.remainingDeck);
-          setDeckCount(data.deckCount);
-          setSelectedInitialCards(data.selectedCount);
-          setTableCards(data.allCards);
-        }
-        break;
-
-      case 'DEALING_STARTED':
-        setDealingPhase('dealing');
-        // Add dealing animation timing
-        setTimeout(() => {
-          if (playerNumber === 1) {
-            ws.send(JSON.stringify({ 
-              type: 'DEALING_COMPLETE',
-              finalCards: data.finalCards
-            }));
-          }
-        }, 6000);
-        break;
-
-      case 'HANDS_DEALT':
-        setDeck(data.remainingDeck);
-        setDeckCount(data.deckCount);
-        setPlayers(prev => prev.map(player => ({
-          ...player,
-          hand: data.hands[player.id] || []
-        })));
-        setDealingPhase('playing');
-        break;
-
-      case 'CARD_PLAYED':
-        setTableCards(prev => [...prev, {
-          ...data.card,
-          x: data.position.x,
-          y: data.position.y
-        }]);
-        setCurrentPlayer(curr => curr === 0 ? 1 : 0);
-        
-        // Update the player's hand
-        setPlayers(prev => prev.map(player => {
-          if (player.id === data.playerId) {
-            return {
-              ...player,
-              hand: player.hand.filter(c => 
-                c.id !== data.card.id
-              )
-            };
-          }
-          return player;
-        }));
-
-        // Update the deck state
-        setDeck(prev => prev.map(card => 
-          card.id === data.card.id ? { ...card, used: true } : card
-        ));
-        setDeckCount(prev => prev - 1);
-        break;
-
-      case 'CARDS_CAPTURED':
-        setPlayers(prev => prev.map(player => {
-          if (player.id === data.playerId) {
-            return {
-              ...player,
-              home: [...player.home, ...data.cards],
-              score: player.score + data.cards.length
-            };
-          }
-          return player;
-        }));
-        setTableCards(prev => 
-          prev.filter(card => 
-            !data.cards.some(c => c.id === card.id)
-          )
-        );
-        break;
-
-      case 'PLAYER_DISCONNECTED':
-        setGameState('opponent_disconnected');
-        setError('Your opponent has disconnected from the game.');
-        break;
-
-      case 'ERROR':
-        setError(data.message || 'An error occurred in the game.');
-        break;
-
-      default:
-        console.warn('Unknown message type:', data.type);
-        break;
-    }
-  } catch (error) {
-    console.error('Error processing message:', error);
-    setError('Error processing game data. Please try refreshing the page.');
+    // Add similar listeners for other events...
   }
 }, [playerNumber, ws]);
 
@@ -375,14 +372,14 @@ const playCard = useCallback((playerNum, card, dropResult) => {
       // Verify card hasn't been used
       const cardInDeck = deck.find(c => c.id === card.id);
       if (cardInDeck && !cardInDeck.used) {
-        ws.send(JSON.stringify({
+        ws.emit('eventName', {
           type: 'PLAY_CARD',
           card,
           position: {
             x: dropResult.x,
             y: dropResult.y
           }
-        }));
+        });
       }
     } catch (error) {
       console.error('Error sending play card message:', error);
