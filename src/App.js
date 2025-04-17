@@ -39,15 +39,15 @@ const createFullDeck = () => {
 function App() {
   // View state
   const [currentView, setCurrentView] = useState('landing');
+  const [maxPlayers, setMaxPlayers] = useState(2);
+  const [playerName, setPlayerName] = useState('');
+  const [needsName, setNeedsName] = useState(false);
 
   // Game state
   const [ws, setWs] = useState(null);
   const [gameState, setGameState] = useState('connecting');
   const [playerNumber, setPlayerNumber] = useState(null);
-  const [players, setPlayers] = useState([
-    { id: 0, hand: [], home: [], score: 0, name: "Waiting for Player 1..." },
-    { id: 1, hand: [], home: [], score: 0, name: "Waiting for Player 2..." }
-  ]);
+  const [players, setPlayers] = useState([]);
   const [tableCards, setTableCards] = useState([]);
   const [currentPlayer, setCurrentPlayer] = useState(0);
   const [error, setError] = useState(null);
@@ -59,6 +59,18 @@ function App() {
   // Dealing phase states
   const [dealingPhase, setDealingPhase] = useState('waiting');
   const [selectedInitialCards, setSelectedInitialCards] = useState(0);
+
+  // Initialize players array based on maxPlayers
+  useEffect(() => {
+    const initialPlayers = Array(maxPlayers).fill(null).map((_, index) => ({
+      id: index,
+      hand: [],
+      home: [],
+      score: 0,
+      name: `Waiting for Player ${index + 1}...`
+    }));
+    setPlayers(initialPlayers);
+  }, [maxPlayers]);
 
   // Initialize deck when game starts
   useEffect(() => {
@@ -73,9 +85,10 @@ function App() {
   }, [gameState, playerNumber, ws]);
 
   // Navigation handlers
-  const handleStartGame = () => {
+  const handleStartGame = (playerCount) => {
+    setMaxPlayers(playerCount);
     setCurrentView('game');
-    initializeWebSocket();
+    initializeWebSocket(playerCount);
   };
 
   const handleShowRules = () => {
@@ -94,10 +107,13 @@ function App() {
   const resetGameState = () => {
     setGameState('connecting');
     setPlayerNumber(null);
-    setPlayers([
-      { id: 0, hand: [], home: [], score: 0, name: "Waiting for Player 1..." },
-      { id: 1, hand: [], home: [], score: 0, name: "Waiting for Player 2..." }
-    ]);
+    setPlayers(Array(maxPlayers).fill(null).map((_, index) => ({
+      id: index,
+      hand: [],
+      home: [],
+      score: 0,
+      name: `Waiting for Player ${index + 1}...`
+    })));
     setTableCards([]);
     setCurrentPlayer(0);
     setDeckCount(52);
@@ -107,37 +123,71 @@ function App() {
     setDeck([]);
   };
 
-  const initializeWebSocket = () => {
-    const socket = io({
-      path: '/api/socket',
+  const handleNameSubmit = (e) => {
+    e.preventDefault();
+    if (playerName.trim() && ws) {
+      ws.emit('setPlayerName', { name: playerName.trim() });
+      setNeedsName(false);
+      setPlayerName('');
+    }
+  };
+
+  const initializeWebSocket = (playerCount) => {
+    const socket = io('http://localhost:8080', {
+      path: '/socket.io',
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 5,
-      reconnectionDelay: 1000
+      reconnectionDelay: 1000,
+      query: { maxPlayers: playerCount }
     });
   
     socket.on('connect', () => {
       console.log('Connected to server');
       setGameState('joining');
       socket.emit('joinGame', {
-        playerName: `Player ${Math.floor(Math.random() * 1000)}`
+        maxPlayers: playerCount
       });
     });
   
     socket.on('gameJoined', (data) => {
       setPlayerNumber(data.playerNumber);
       setGameState('waiting');
+      setNeedsName(data.needsName);
+      setMaxPlayers(data.maxPlayers || 2);
       setPlayers(prev => {
-        const newPlayers = [...prev];
-        newPlayers[data.playerNumber - 1] = {
-          ...newPlayers[data.playerNumber - 1],
+        // Ensure the players array matches the correct size
+        const arr = Array(data.maxPlayers || 2).fill(null).map((_, idx) => ({
+          id: idx + 1,
+          hand: [],
+          home: [],
+          score: 0,
+          name: `Waiting for Player ${idx + 1}...`
+        }));
+        arr[data.playerNumber - 1] = {
+          ...arr[data.playerNumber - 1],
           id: data.playerNumber,
           name: `Player ${data.playerNumber}`
         };
+        return arr;
+      });
+    });
+
+    socket.on('playerNameUpdated', (data) => {
+      setPlayers(prev => {
+        const newPlayers = [...prev];
+        const playerIndex = newPlayers.findIndex(p => p.id === data.playerId);
+        if (playerIndex !== -1) {
+          newPlayers[playerIndex] = {
+            ...newPlayers[playerIndex],
+            name: data.name
+          };
+        }
         return newPlayers;
       });
     });
   
     socket.on('gameStarted', (data) => {
+      setMaxPlayers(data.maxPlayers || data.players.length || 2);
       setPlayers(data.players.map(p => ({
         ...p,
         hand: [],
@@ -300,15 +350,18 @@ function App() {
 
   // Deal initial hands
   const dealInitialHands = (currentDeck) => {
-    const hands = { 1: [], 2: [] };
+    const hands = {};
     const newDeck = [...currentDeck];
     let unusedCards = newDeck.filter(card => !card.used);
 
     // Deal 12 cards to each player
-    for (let i = 0; i < 24; i++) {
-      const playerNum = i < 12 ? 1 : 2;
+    for (let i = 0; i < maxPlayers * 12; i++) {
+      const playerNum = i % maxPlayers;
       const card = unusedCards[i];
       if (card) {
+        if (!hands[playerNum]) {
+          hands[playerNum] = [];
+        }
         hands[playerNum].push(card);
         const cardIndex = newDeck.findIndex(c => c.id === card.id);
         newDeck[cardIndex] = { ...card, used: true };
@@ -316,206 +369,220 @@ function App() {
     }
 
     setDeck(newDeck);
-    setDeckCount(prev => prev - 24);
+    setDeckCount(prev => prev - maxPlayers * 12);
 
     ws.emit('eventName', {
       type: 'HANDS_DEALT',
       hands,
       remainingDeck: newDeck,
-      deckCount: deckCount - 24
+      deckCount: deckCount - maxPlayers * 12
     });
   };
 
-// Replace the handleMessage function with:
-const handleMessage = useCallback((event) => {
-  // Instead of setting ws.onmessage, set up individual event listeners
-  if (ws) {
-    ws.on('gameJoined', (data) => {
-      setPlayerNumber(data.playerNumber);
-      setGameState('waiting');
-      setPlayers(prev => {
-        const newPlayers = [...prev];
-        newPlayers[data.playerNumber - 1] = {
-          ...newPlayers[data.playerNumber - 1],
-          id: data.playerNumber,
-          name: `Player ${data.playerNumber}`
-        };
-        return newPlayers;
-      });
-    });
-
-    ws.on('gameStarted', (data) => {
-      setPlayers(data.players.map(p => ({
-        ...p,
-        hand: [],
-        home: [],
-        score: 0
-      })));
-      setGameState('playing');
-      setDealingPhase(playerNumber === 1 ? 'selecting' : 'watching_selection');
-    });
-
-    // Add similar listeners for other events...
-  }
-}, [playerNumber, ws]);
-
-// Set up message handler
-useEffect(() => {
-  if (ws) {
-    ws.onmessage = handleMessage;
-  }
-}, [ws, handleMessage]);
-
-// Handle playing a card
-const playCard = useCallback((playerNum, card, dropResult) => {
-  if (ws && gameState === 'playing' && dealingPhase === 'playing' && 
-      playerNum === playerNumber && currentPlayer === playerNum) {
-    try {
-      // Verify card hasn't been used
-      const cardInDeck = deck.find(c => c.id === card.id);
-      if (cardInDeck && !cardInDeck.used) {
-        ws.emit('eventName', {
-          type: 'PLAY_CARD',
-          card,
-          position: {
-            x: dropResult.x,
-            y: dropResult.y
-          }
+  const handleMessage = useCallback((event) => {
+    // Instead of setting ws.onmessage, set up individual event listeners
+    if (ws) {
+      ws.on('gameJoined', (data) => {
+        setPlayerNumber(data.playerNumber);
+        setGameState('waiting');
+        setPlayers(prev => {
+          const newPlayers = [...prev];
+          newPlayers[data.playerNumber - 1] = {
+            ...newPlayers[data.playerNumber - 1],
+            id: data.playerNumber,
+            name: `Player ${data.playerNumber}`
+          };
+          return newPlayers;
         });
-      }
-    } catch (error) {
-      console.error('Error sending play card message:', error);
-      setError('Failed to play card. Please try again.');
+      });
+
+      ws.on('gameStarted', (data) => {
+        setPlayers(data.players.map(p => ({
+          ...p,
+          hand: [],
+          home: [],
+          score: 0
+        })));
+        setGameState('playing');
+        setDealingPhase(playerNumber === 1 ? 'selecting' : 'watching_selection');
+      });
+
+      // Add similar listeners for other events...
     }
-  }
-}, [ws, gameState, dealingPhase, playerNumber, currentPlayer, deck]);
+  }, [playerNumber, ws]);
 
-// Render game content
-const renderGameContent = () => {
-  if (gameState === 'connecting') {
-    return <div>Connecting to server...</div>;
-  }
+  // Set up message handler
+  useEffect(() => {
+    if (ws) {
+      ws.onmessage = handleMessage;
+    }
+  }, [ws, handleMessage]);
 
-  if (gameState === 'waiting') {
-    return (
-      <div>
-        <div>Waiting for opponent...</div>
-        <div>You are {players[playerNumber - 1]?.name}</div>
-      </div>
-    );
-  }
+  // Handle playing a card
+  const playCard = useCallback((playerNum, card, dropResult) => {
+    if (ws && gameState === 'playing' && dealingPhase === 'playing' && 
+        playerNum === playerNumber && currentPlayer === playerNum) {
+      try {
+        // Verify card hasn't been used
+        const cardInDeck = deck.find(c => c.id === card.id);
+        if (cardInDeck && !cardInDeck.used) {
+          ws.emit('eventName', {
+            type: 'PLAY_CARD',
+            card,
+            position: {
+              x: dropResult.x,
+              y: dropResult.y
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error sending play card message:', error);
+        setError('Failed to play card. Please try again.');
+      }
+    }
+  }, [ws, gameState, dealingPhase, playerNumber, currentPlayer, deck]);
 
-  if (gameState === 'error' || gameState === 'opponent_disconnected') {
-    return (
-      <div>
-        <div>{gameState === 'error' ? 'Connection error' : 'Opponent disconnected'}</div>
-        <button
-          onClick={() => window.location.reload()}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#4CAF50',
-            color: 'white',
-            border: 'none',
-            borderRadius: '5px',
-            cursor: 'pointer',
-            margin: '10px'
-          }}
-        >
-          {gameState === 'error' ? 'Retry Connection' : 'Find New Game'}
-        </button>
-      </div>
-    );
-  }
+  // Render game content
+  const renderGameContent = () => {
+    if (gameState === 'connecting') {
+      return <div>Connecting to server...</div>;
+    }
 
-  if (gameState === 'playing') {
-    return (
-      <div className="game-board">
-        <Player 
-          player={players[playerNumber === 1 ? 1 : 0]}
-          isCurrentPlayer={currentPlayer === (playerNumber === 1 ? 1 : 0)}
-          onPlayCard={(card, dropResult) => playCard(playerNumber === 1 ? 1 : 0, card, dropResult)}
-        />
-        <DroppableTable 
-          cards={tableCards}
-          player1Home={players[0]?.home || []}
-          player2Home={players[1]?.home || []}
-          dealingPhase={dealingPhase}
-          isPlayer1={playerNumber === 1}
-          onCardSelect={handleInitialCardSelection}
-          selectedCards={tableCards}
-          deckCards={deck}
-        />
-        <Player 
-          player={players[playerNumber === 1 ? 0 : 1]}
-          isCurrentPlayer={currentPlayer === (playerNumber === 1 ? 0 : 1)}
-          onPlayCard={(card, dropResult) => playCard(playerNumber === 1 ? 0 : 1, card, dropResult)}
-        />
-        <Deck cardsLeft={deckCount} />
-      </div>
-    );
-  }
-
-  return null;
-};
-
-// Main render
-return (
-  <div className="App">
-    {currentView === 'landing' && (
-      <LandingPage 
-        onStartGame={handleStartGame}
-        onShowRules={handleShowRules}
-      />
-    )}
-
-    {currentView === 'rules' && (
-      <RulesPage onBack={handleBackToMenu} />
-    )}
-
-    {currentView === 'game' && (
-      <DndProvider backend={HTML5Backend}>
-        <div className="game-view">
-          <div className="game-header" style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '10px',
-            backgroundColor: 'rgba(0, 0, 0, 0.1)'
-          }}>
-            <h1>Casino Card Game</h1>
-            <button
-              onClick={handleBackToMenu}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#666',
-                color: 'white',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: 'pointer'
-              }}
-            >
-              Back to Menu
-            </button>
-          </div>
-
-          {error && (
-            <div className="error-message" style={{
-              color: 'red',
-              padding: '10px',
-              margin: '10px 0',
-              backgroundColor: '#fff3f3',
-              borderRadius: '5px'
-            }}>
-              {error}
-            </div>
-          )}
-
-          {renderGameContent()}
+    if (gameState === 'waiting') {
+      return (
+        <div>
+          <div>Waiting for opponent...</div>
+          <div>You are {players[playerNumber - 1]?.name}</div>
         </div>
-      </DndProvider>
-    )}
-  </div>
-);
+      );
+    }
+
+    if (gameState === 'error' || gameState === 'opponent_disconnected') {
+      return (
+        <div>
+          <div>{gameState === 'error' ? 'Connection error' : 'Opponent disconnected'}</div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#4CAF50',
+              color: 'white',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              margin: '10px'
+            }}
+          >
+            {gameState === 'error' ? 'Retry Connection' : 'Find New Game'}
+          </button>
+        </div>
+      );
+    }
+
+    if (gameState === 'playing') {
+      return (
+        <div className="game-board">
+          {players.map((player, index) => (
+            <Player 
+              key={index}
+              player={player}
+              isCurrentPlayer={currentPlayer === index}
+              onPlayCard={(card, dropResult) => playCard(index, card, dropResult)}
+            />
+          ))}
+          <DroppableTable 
+            cards={tableCards}
+            players={players}
+            dealingPhase={dealingPhase}
+            onCardSelect={handleInitialCardSelection}
+            selectedCards={tableCards}
+            deckCards={deck}
+          />
+          <Deck cardsLeft={deckCount} />
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // Main render
+  return (
+    <div className="App">
+      {currentView === 'landing' && (
+        <LandingPage 
+          onStartGame={handleStartGame}
+          onShowRules={handleShowRules}
+        />
+      )}
+
+      {currentView === 'rules' && (
+        <RulesPage onBack={() => setCurrentView('landing')} />
+      )}
+
+      {currentView === 'game' && (
+        <DndProvider backend={HTML5Backend}>
+          <div style={{
+            minHeight: '100vh',
+            backgroundColor: '#f0f0f0'
+          }}>
+            <div className="game-header" style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '10px',
+              backgroundColor: 'rgba(0, 0, 0, 0.1)'
+            }}>
+              <h1>Casino Card Game ({maxPlayers} Players)</h1>
+              <button
+                onClick={handleBackToMenu}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#666',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer'
+                }}
+              >
+                Back to Menu
+              </button>
+            </div>
+
+            {error && (
+              <div className="error-message" style={{
+                color: 'red',
+                padding: '10px',
+                margin: '10px 0',
+                backgroundColor: '#fff3f3',
+                borderRadius: '5px'
+              }}>
+                {error}
+              </div>
+            )}
+
+            {needsName && (
+              <div className="name-input-overlay">
+                <form onSubmit={handleNameSubmit}>
+                  <h2>Enter Your Name</h2>
+                  <input
+                    type="text"
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    placeholder="Enter your name"
+                    required
+                  />
+                  <button type="submit">Submit</button>
+                </form>
+              </div>
+            )}
+
+            {renderGameContent()}
+          </div>
+        </DndProvider>
+      )}
+    </div>
+  );
 }
 
 export default App;

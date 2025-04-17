@@ -1,16 +1,17 @@
 {
-  "name": "server",
+  "name": "casino-card-game-server",
   "version": "1.0.0",
+  "description": "Server for casino card game",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
-    "uuid": "^10.0.0",
-    "ws": "^8.18.0"
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.0"
   }
 }

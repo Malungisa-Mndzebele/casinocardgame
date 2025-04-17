@@ -2,6 +2,7 @@
   "name": "casino-card-game",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:8080",
   "dependencies": {
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
@@ -20,13 +21,10 @@
     "socket.io-client": "^4.7.2"
   },
   "scripts": {
-    "start": "node serve/index.js",
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
     "start": "set GENERATE_SOURCEMAP=false && react-scripts start",
-    "build": "set GENERATE_SOURCEMAP=false && react-scripts build"
+    "build": "set GENERATE_SOURCEMAP=false && react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
   },
   "eslintConfig": {
     "extends": [
@@ -50,4 +48,3 @@
     ]
   }
 }
-

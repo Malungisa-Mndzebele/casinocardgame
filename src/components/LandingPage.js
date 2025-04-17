@@ -1,7 +1,9 @@
 // src/components/LandingPage.js
-import React from 'react';
+import React, { useState } from 'react';
 
 function LandingPage({ onStartGame, onShowRules }) {
+  const [selectedPlayers, setSelectedPlayers] = useState(2);
+
   return (
     <div className="landing-page" style={{
       minHeight: '100vh',
@@ -39,6 +41,41 @@ function LandingPage({ onStartGame, onShowRules }) {
           Challenge your friends in this classic card game of strategy and skill!
         </p>
 
+        <div className="player-selection" style={{
+          marginBottom: '30px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '15px'
+        }}>
+          <h2 style={{ fontSize: '1.4em', marginBottom: '10px' }}>Select Number of Players</h2>
+          <div style={{
+            display: 'flex',
+            gap: '10px',
+            justifyContent: 'center'
+          }}>
+            {[2, 3, 4].map(num => (
+              <button
+                key={num}
+                onClick={() => setSelectedPlayers(num)}
+                style={{
+                  padding: '10px 20px',
+                  fontSize: '1.1em',
+                  backgroundColor: selectedPlayers === num ? '#4CAF50' : 'transparent',
+                  color: 'white',
+                  border: '2px solid white',
+                  borderRadius: '15px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  width: '60px'
+                }}
+              >
+                {num}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="menu-buttons" style={{
           display: 'flex',
           flexDirection: 'column',
@@ -46,7 +83,7 @@ function LandingPage({ onStartGame, onShowRules }) {
           alignItems: 'center'
         }}>
           <button
-            onClick={onStartGame}
+            onClick={() => onStartGame(selectedPlayers)}
             style={{
               padding: '15px 40px',
               fontSize: '1.2em',
@@ -68,7 +105,7 @@ function LandingPage({ onStartGame, onShowRules }) {
               e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.2)';
             }}
           >
-            Start Game
+            Start {selectedPlayers}-Player Game
           </button>
           
           <button
